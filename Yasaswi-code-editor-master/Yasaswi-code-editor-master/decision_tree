@@ -1,0 +1,130 @@
+/* Simple Decision Tree module
+
+Author: Rodrigo E. Principe
+mail: fitoprincipe82@gmail.com
+LICENSE: MIT
+*/
+
+var lalg = require('users/fitoprincipe/geetools:list_algorithms')
+var tools = require('users/fitoprincipe/geetools:tools')
+
+var help = {}
+
+var binary = function(conditions, classes, mask_name) {
+ /*
+ Binary decision tree
+ 
+ conditions: an object holding conditions. Example: {1: img.gt(0), 2: img.lt(500)}
+ classes: a dict holding paths for different classes. 
+          Example: {water:[[1,1], [2,0]], land: [[1,0],[2,1}]}
+                   this means that the 'water' class will be when condition 1 is true
+                   and condition 2 is false, and 'land' class will be when condition
+                   1 is false and cond 2 is true
+ 
+ */
+ 
+ mask_name = mask_name || 'dt_mask'
+ var cond = ee.Dictionary(conditions)
+ var paths = ee.Dictionary(classes)
+ 
+ var C = function(condition, bool) {
+   //var b = ee.Number(bool)
+   return ee.Image(ee.Algorithms.If(bool, ee.Image(condition), ee.Image(condition).not()))
+ }
+ 
+ var wrap = function(img) {
+   
+   // function to iterate over the path (classes)
+   var overpath = function(key, path) {
+     var v = ee.List(path) // the path is a list of lists
+     
+     // define an intial image = 1 with one band with the name of the class
+     var ini = ee.Image.constant(1).select([0], [key])
+     
+     // iterate over the path (first arg is a pair: [cond, bool])
+     var result = ee.Image(v.iterate(function(pair, init){
+       init = ee.Image(init)
+       pair = ee.List(pair)
+       var boolean = pair.get(1)
+       var condition_key = pair.get(0)  // could need var casting
+       var condition = cond.get(condition_key)
+       var final_condition = C(condition, boolean)
+       return ee.Image(init.and(ee.Image(final_condition)))
+     }, ini))
+     return result
+   }
+   var new_classes = ee.Dictionary(paths.map(overpath))
+   
+   // UNIFY CLASSES. example: {'snow-1':x, 'snow-2':y} into {'snow': x.and(y)}
+   var new_classes_list = new_classes.keys()
+   
+   var repeated = new_classes_list.map(function(el){
+     return ee.String(el).split('-').get(0)
+   })
+   
+   var unique = lalg.remove_duplicates(repeated)
+   
+   // CREATE INITIAL DICT
+   var ini = ee.Dictionary(unique.iterate(function(baseclass, ini) {
+     ini = ee.Dictionary(ini)
+     var i = ee.Image.constant(0).select([0], [baseclass])
+     return ini.set(baseclass, i)
+   }, ee.Dictionary({})))
+   
+   // var ini = ee.Dictionary.fromLists(unique, ee.List.repeat(ee.Image(0), unique.size()))
+   var unify = function(key, init) {
+     init = ee.Dictionary(init)
+     var baseclass = ee.String(key).split('-').get(0)
+     var mask_before = ee.Image(init.get(baseclass))
+     var mask = new_classes.get(key)
+     var new_mask = mask_before.or(mask)
+     return init.set(baseclass, new_mask)
+   }
+   var new_classes_unique = ee.Dictionary(new_classes_list.iterate(unify, ini))
+   
+   var masks = new_classes_unique.values() // list of masks
+   //print(masks)
+   
+   // Return an Image with one band per option
+   
+   var mask_img = ee.Image(masks.slice(1).iterate(function(mask, ini){
+     ini = ee.Image(ini)
+     return ini.addBands(mask)
+   }, ee.Image(masks.get(0))))
+   //print(mask_img)
+   
+   var init = ee.Image.constant(0).rename(mask_name)
+   
+   var result = masks.iterate(function(mask, ini){
+     ini = ee.Image(ini)
+     return ini.or(mask)
+   }, init)
+   
+   var not_mask = ee.Image(result).not()
+   
+   return mask_img.addBands(not_mask)
+   /*
+   // ADD CLASSES AS BANDS OF THE IMAGE
+   return ee.Image(masks.iterate(function(mask, ini){
+        ini = ee.Image(ini)
+        return ini.addBands(mask)
+      }, img))*/
+ }
+ return wrap
+}
+
+help['binary'] = "binary(conditions, classes, mask_name)\n\n"+
+                 "Implement a binary decision tree given a set of conditions and paths for the classes\n"+
+                 "conditions: it must be a ee.Dictionary or JS object holding the conditional images or values\n"+
+                 "classes: it must be a ee.Dictionary or JS object holding the path for every class.\n"+
+                 "         If one class has more than one path, use '-' to indicate the number, and will be\n"+
+                 "         automatically converted to the same class\n"+
+                 "mask_name: name for the whole (inverse) mask. Default: dt_mask"
+                 "Return: a function to apply in a map algorithm over a ImageCollection\n"+
+                 "        In each image of the collection will be added a band for each\n"+
+                 "        class\n"+
+                 "EXAMPLE: link to code editor\n"
+
+exports.binary = binary
+exports.help = help
+exports.options = ee.Dictionary(help).keys()

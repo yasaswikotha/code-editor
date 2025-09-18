@@ -1,0 +1,224 @@
+var tools = require('users/fitoprincipe/geetools:tools')
+var helpers = require('users/fitoprincipe/geetools:helpers_js')
+
+var ImageSlider = function(collection, options) {
+  var def = {
+    start: null,
+    end: null,
+    title: 'ImageSlider',
+    width: 200,
+    mosaic: true,
+    site: null,
+    map: Map
+  }
+  
+  this.options = helpers.get_options(def, options)
+  var ordered = collection.sort('system:time_start', true)
+  this.collection = ordered
+  
+  if (!this.options.start) {
+    var first = ordered.first()
+    this.options.start = first.date().format().getInfo()
+  }
+  if (!this.options.end) {
+    var last = ee.Image(ordered.toList(ordered.size()).get(-1))
+    this.options.end = last.date().format().getInfo()
+  }
+  
+  this.slider = ui.DateSlider(this.options.start, this.options.end)
+  
+  this.logger = ui.Label('')
+  this.logger.style().set('color', 'red')
+  
+  this.panel = ui.Panel({
+    widgets: [ui.Label(this.options.title), this.logger, this.slider]
+  })
+  
+  this.setWidth(this.options.width)
+  this.images = {}
+}
+
+ImageSlider.prototype.build = function() {
+  return this.panel
+}
+
+ImageSlider.prototype.addTo = function(widget) {
+  widget.add(this.build())
+  this.parent = widget
+  return widget
+}
+
+ImageSlider.prototype.insertTo = function(widget, position) {
+  widget.insert(position, this.build())
+  this.parent = widget
+  return widget
+}
+
+ImageSlider.prototype.setWidth = function(width) {
+  var ps = new helpers.PixelSize(width)
+  this.panel.style().set('width', ps.value())
+  var sliderwidth = ps.subtract(30).value()
+  this.slider.style().set('width', sliderwidth)
+}
+
+ImageSlider.prototype.getDate = function() {
+  return this.slider.getValue()[0]
+}
+
+ImageSlider.prototype.getFiltered = function(collection, date, site, strategy, keepCurrent) {
+  var filtered = collection.filterBounds(site)
+  date = ee.Date(date)
+  var self = this
+  if (strategy === 'exact') {
+    var start = date
+  } else if (strategy === 'back') {
+    if (keepCurrent) {
+      filtered = filtered.filterDate('1970-01-01', date.advance(1, 'day'))
+    } else {
+      filtered = filtered.filterDate('1970-01-01', date)
+    }
+    var sorted = filtered.sort('system:time_start', false)
+    var first = ee.Image(sorted.first())
+    var start = first.date()
+  } else if (strategy === 'forth') {
+    if (keepCurrent) {
+      filtered = filtered.filterDate(date, date.advance(1, 'month'))
+    } else {
+      filtered = filtered.filterDate(date.advance(1, 'day'), date.advance(1, 'month'))
+    }
+    var sorted = filtered.sort('system:time_start', true)
+    var first = ee.Image(sorted.first())
+    var start = first.date()
+  } else if (strategy === 'closest') {
+    var image = tools.imageCollection.getClosestTo(filtered, date)
+    var start = image.date()
+  }
+  var end = start.advance(1, 'day')
+  filtered = filtered.filterDate(start, end)
+  
+  return [filtered, start]
+}
+
+ImageSlider.prototype.getImage = function(options) {
+  // date param must be in milliseconds
+  
+  this.logger.setValue('Loading image...')
+  
+  var def = {
+    date: this.getDate(),
+    site: this.options.site,
+    mosaic: this.options.mosaic,
+    strategy: 'exact',
+    keepCurrent: false
+  }
+  var opt = helpers.get_options(def, options)
+  
+  var site = opt.site || tools.map.getBounds(this.map)
+  
+  var self = this
+  var proxy = ee.Image(0).selfMask()
+  
+  var getImage = function(filt) {
+    var filtered = filt[0]
+    var date = filt[1]
+    
+    date = ee.Date.fromYMD(date.get('year'), date.get('month'), date.get('day'))
+    
+    var size = filtered.size()
+    if (opt.mosaic) {
+      var geom = tools.imageCollection.mergeGeometries(filtered)
+      var image = filtered.mosaic().set('system:time_start', date.millis()).clip(geom)
+    } else {
+      var image = filtered.first()
+    }
+    image = ee.Image(ee.Algorithms.If(size, image, proxy))
+    date.millis().evaluate(function(d){
+      self.slider.setValue(d)
+      self.logger.setValue('Image loaded')
+    })
+    return image
+  }
+  
+  if (this.options.site) { // storte in images dict
+    if (this.images[opt.date]) {
+      return this.images[opt.date]
+    } else {
+      var filtered = this.getFiltered(this.collection, opt.date, site, opt.strategy, opt.keepCurrent)
+      var image = getImage(filtered)
+      this.images[opt.date] = image
+    }
+  } else {
+    var filtered = this.getFiltered(this.collection, opt.date, site, opt.strategy, opt.keepCurrent)
+    var image = getImage(filtered)
+  }
+  return image
+}
+
+ImageSlider.prototype.getForward = function(options) {
+  var def = {
+    site: this.options.site,
+    mosaic: this.options.mosaic,
+    keepCurrent: false
+  }
+  var opt = helpers.get_options(def, options)
+  
+  return this.getImage({site: opt.site, mosaic: opt.mosaic, strategy:'forth', keepCurrent: opt.keepCurrent})
+}
+
+ImageSlider.prototype.getBackward = function(options) {
+  var def = {
+    site: this.options.site,
+    mosaic: this.options.mosaic,
+    keepCurrent: false
+  }
+  var opt = helpers.get_options(def, options)
+  
+  return this.getImage({site: opt.site, mosaic: opt.mosaic, strategy:'back', keepCurrent: opt.keepCurrent})
+}
+
+ImageSlider.prototype.getClosest = function(options) {
+  var def = {
+    site: this.options.site,
+    mosaic: this.options.mosaic,
+    keepCurrent: false
+  }
+  var opt = helpers.get_options(def, options)
+  
+  return this.getImage({site: opt.site, mosaic: opt.mosaic, strategy:'closest', keepCurrent: opt.keepCurrent})
+}
+
+exports.ImageSlider = ImageSlider
+
+var test = function() {
+  var col = ee.ImageCollection('COPERNICUS/S2')
+  var slider = new ImageSlider(col, {start: '2018-01-01', end:'2018-05-01'})
+  slider.setWidth(500)
+  slider.addTo(Map)
+  var but = ui.Button('closest')
+  var f = ui.Button('forth')
+  var b = ui.Button('back')
+  
+  but.onClick(function() {
+    var i = slider.getClosest()
+    if (i) {
+      Map.addLayer(i, {bands:['B4', 'B3', 'B2'], min:0, max:5000}, i.date().format().getInfo())
+    } else { print('no images') }
+  })
+  f.onClick(function() {
+    var i = slider.getForward({keepCurrent:true})
+    if (i) {
+      Map.addLayer(i, {bands:['B4', 'B3', 'B2'], min:0, max:5000}, i.date().format().getInfo())
+    } else { print('no images') }
+  })
+  b.onClick(function() {
+    var i = slider.getBackward({keepCurrent:false})
+    if (i) {
+      Map.addLayer(i, {bands:['B4', 'B3', 'B2'], min:0, max:5000}, i.date().format().getInfo())
+    } else { print('no images') }
+  })
+  Map.add(but)
+  Map.add(b)
+  Map.add(f)
+}
+
+//test()

@@ -1,0 +1,185 @@
+var helpersJS = require('users/fitoprincipe/geetools:helpers_js')
+var collection = require('users/fitoprincipe/geetools:_tools/collection').collection
+var image_module = require('users/fitoprincipe/geetools:_tools/image').image
+
+//** IMAGE COLLECTIONS **//
+var imageCollection = {};
+
+imageCollection.enumerateProperty = function(col, name) {
+  name = name || 'enumeration'
+  //var collist = col.toList(col.size())
+  var enumerated = collection.enumerate(col)
+  
+  var featlist = enumerated.map(function(l){
+    l = ee.List(l)
+    var index = ee.Number(l.get(0))
+    var element = l.get(1)
+    return ee.Image(element).set(name, index)
+  })
+  return ee.ImageCollection.fromImages(featlist)
+}
+
+imageCollection.mergeGeometries = function(collection) {
+    /// Merge the geometries of many images. Return ee.Geometry
+    var imlist = collection.toList(collection.size())
+
+    var first = ee.Image(imlist.get(0))
+    var rest = imlist.slice(1)
+
+    var wrap = function(img, ini) {
+        ini = ee.Geometry(ini)
+        img = ee.Image(img)
+        var geom = img.geometry()
+        var union = geom.union(ini)
+        return union.dissolve()
+    }
+
+    return ee.Geometry(rest.iterate(wrap, first.geometry()))
+}
+
+imageCollection.getClosestTo = function(collection, date) {
+  date = ee.Date(date)
+  var distance = collection.map(function(img){
+    var idate = img.date()
+    var diff = date.difference(idate, 'second').abs()
+    return img.set('closestDateGEETOOLS', diff)
+  })
+  var sorted = distance.sort('closestDateGEETOOLS', true)
+  return ee.Image(sorted.first())
+}
+
+imageCollection.mosaicSameDay = function(collection) {
+  var make_date_list = function(img, l) {
+    l = ee.List(l)
+    img = ee.Image(img)
+    var date = img.date()
+    // make clean date
+    var day = date.get('day')
+    var month = date.get('month')
+    var year = date.get('year')
+    var clean_date = ee.Date.fromYMD(year, month, day)
+    var condition = l.contains(clean_date)
+
+    return ee.Algorithms.If(condition, l, l.add(clean_date))
+  }
+
+  var col_list = collection.toList(collection.size())
+  var date_list = ee.List(col_list.iterate(make_date_list, ee.List([])))
+
+  var first_img = ee.Image(collection.first())
+  var bands = first_img.bandNames()
+
+  var make_col = function(date) {
+    date = ee.Date(date)
+    var filtered = collection.filterDate(date, date.advance(1, 'day'))
+    
+
+    var mosaic = filtered.mosaic()
+    mosaic = mosaic.set('system:time_start', date.millis(),
+                        'system:footprint', imageCollection.mergeGeometries(filtered))
+
+    mosaic = mosaic.rename(bands)
+    var reproject = function(bname, mos) {
+      mos = ee.Image(mos)
+      var mos_bnames = mos.bandNames()
+      var bname = ee.String(bname)
+      var proj = first_img.select(bname).projection()
+
+      var newmos = ee.Image(ee.Algorithms.If(
+          mos_bnames.contains(bname),
+          image_module.replaceBand(mos, bname, mos.select(bname).setDefaultProjection(proj)),
+          mos))
+
+      return newmos
+    }
+
+    mosaic = ee.Image(bands.iterate(reproject, mosaic))
+    return mosaic
+  }
+
+  var  new_col = ee.ImageCollection.fromImages(date_list.map(make_col))
+  return new_col
+}
+
+imageCollection.toQGIS = function(collection, name, visParams, 
+                                  namePattern, properties, datePattern) {
+  name = name || 'ee2qgis'
+  namePattern = namePattern || '{id}'
+  datePattern = datePattern || 'yyyy-MM-dd'
+  visParams = visParams || {min:0, max:1}
+  var baseurl = 'https://str2txt-app.rodrigoprincipe.repl.co/app?name={name}&data={data}'
+  var list = collection.toList(collection.size())
+  var i = 0
+  var params = []
+  while (i>=0) {
+    try {
+      var image = ee.Image(list.get(i))
+      var n = image_module.makeName(image, namePattern, properties, datePattern)
+      var imap = image.getMap(visParams)
+      var idtok = imap['mapid']
+      idtok = idtok.split('/')[3]
+      var mapid = idtok.split('-')[0]
+      var token = idtok.split('-')[1]
+      params.push(n.getInfo())
+      params.push(mapid)
+      params.push(token)
+      i++
+    } catch (error) {
+      //print(error.message)
+      break
+    }
+  }
+  var data = params.join(',')
+  var url = helpersJS.string.format(baseurl, {name: name, data: data})
+  return url
+}
+
+imageCollection.outliers = function(collection, options) {
+  //Compute outliers by:
+
+  //outlier > mean+(sigma*stddev)
+  //outlier < mean+(sigma*stddev)
+
+  //if `updateMask` is False return the passed collection in which each image
+  //have new bands (a mask) corresponding to the passed dict and a suffix '_outlier'
+  //else return the passed collection with the passed bands masked if are
+  //outliers (the outlier band is not returned).
+
+  //idea from: https://www.kdnuggets.com/2017/02/removing-outliers-standard-deviation-python.html
+  var def = {
+    bands: null,
+    sigma: 2,
+    updateMask: false
+  }
+  var opt = helpersJS.get_options(def, options)
+  var bands = opt.bands || ee.Image(collection.first()).bandNames()
+  bands = ee.List(bands)
+  var forstats = collection.select(bands)
+  var mean = forstats.mean()
+  var stddev = forstats.reduce(ee.Reducer.stdDev())
+  var imin = mean.subtract(stddev.multiply(opt.sigma))
+  var imax = mean.add(stddev.multiply(opt.sigma))
+
+  var getOutlier = function(im, imin, imax) {
+    var ismin = im.lt(imin)
+    var ismax = im.gt(imax)
+    var outlier = ismin.or(ismax)
+    return outlier
+  }
+
+  var overcol = function(im) {
+    var outs = getOutlier(im.select(bands), imin, imax)
+    if (opt.updateMask) {
+      var ibands = im.select(bands)
+      ibands = ibands.updateMask(outs.not())
+    } else {
+      var ibands = image_module.addSuffix('_outlier')(outs)
+    }
+
+    return im.addBands({srcImg:ibands, overwrite:true})
+  }
+
+    return collection.map(overcol)
+}
+
+exports.imageCollection = imageCollection

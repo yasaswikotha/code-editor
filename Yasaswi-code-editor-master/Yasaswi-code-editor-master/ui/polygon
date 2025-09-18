@@ -1,0 +1,124 @@
+/***
+ * Polygon Widget
+ * Author: Rodrigo E. Principe
+ * email: fitoprincipe82@gmail.com
+ * licence: MIT
+ ***/
+
+var tools = require('users/fitoprincipe/geetools:tools')
+var helper = require('users/fitoprincipe/geetools:helpers_js')
+
+var Polygon = function(options) {
+  
+  // Arguments
+  var def = {
+    map: Map,
+    map_callback: null,
+    map_callback_id: null,
+  }
+  this.opt = tools.get_options(def, options)
+  
+  this.point_list = []
+  this.callback_ID = null
+  this.drawing = null
+  
+  this.started = false
+}
+
+Polygon.prototype.start = function() {
+    
+  if (this.started) {
+    print('There is a drawing already started, please stop it before a new drawing')
+    return null
+  }
+  
+  this.started = true
+  
+  // unbound callback if parsed
+  if (this.opt.map_callback && this.opt.map_callback_id) {
+    //print('on start', this.opt.map_callback_id)
+    this.opt.map.unlisten(this.opt.map_callback_id)
+  }
+  
+  this.point_list = []
+  this.uuid = helper.uuid4()
+  
+  var fc = ee.FeatureCollection([])
+  Map.addLayer(fc, null, this.uuid)
+  
+  var app = this
+  
+  var callback = function(coords) {
+    var lon = coords.lon
+    var lat = coords.lat
+    var p = [lon, lat]
+    app.point_list.push(p)
+    if (app.point_list.length === 1) {
+      var feat = ee.Feature(ee.Geometry.Point(p))
+    } 
+    else if (app.point_list.length === 2) {
+      var feat = ee.Feature(ee.Geometry.LineString(app.point_list))
+    } 
+    else {
+      var feat = ee.Feature(ee.Geometry.Polygon(app.point_list))
+    }
+  
+    var newfc = ee.FeatureCollection([feat])
+    var layer = tools.map.getLayer(app.uuid)
+    var newlayer = ui.Map.Layer(newfc, null, app.uuid)
+    tools.map.replaceLayer(layer, newlayer, app.opt.map)
+  }
+    
+  this.opt.map.style().set('cursor', 'crosshair')
+  this.callback_ID = this.opt.map.onClick(callback)
+}
+
+Polygon.prototype.stop = function() {
+    
+  // unbound drawing callback
+  this.opt.map.unlisten(this.callback_ID)
+  
+  // bound callback again
+  if (this.opt.map_callback && this.opt.map_callback_id) {
+    this.opt.map_callback_id = this.opt.map.onClick(this.opt.map_callback)
+    //print('on stop', this.opt.map_callback_id)
+  }
+  
+  // remove temp layer
+  tools.map.removeLayerByName(this.uuid, this.opt.map)
+  
+  if (this.point_list.length >= 3) {
+    var polygon = ee.Geometry.Polygon(this.point_list)
+    //Map.addLayer(polygon, null, this.opt.name)
+    this.drawing = polygon
+  } else {
+    this.drawing = null
+    print('The Polygon must have a minimum of 3 points')
+  }
+  this.opt.map.style().set('cursor', 'hand')
+  this.started = false
+}
+
+Polygon.prototype.getDrawing = function() {
+  return this.drawing
+}
+
+exports.Polygon = Polygon
+
+var test = function() {
+  var pol = new Polygon()
+  
+  var start = ui.Button('Start')
+  start.onClick(function(){pol.start()})
+  
+  var stop = ui.Button('Stop')
+  stop.onClick(function(){
+    pol.stop()
+    print(pol.drawing)
+  })
+  
+  Map.add(start)
+  Map.add(stop)
+}
+
+//test()

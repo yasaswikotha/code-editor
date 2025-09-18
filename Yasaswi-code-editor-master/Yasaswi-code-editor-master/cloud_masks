@@ -1,0 +1,346 @@
+/***
+ * Functions to apply cloud mask to different collections
+ * 
+ * Author: Rodrigo E. Principe
+ * email: fitoprincipe82@gmail.com
+ * License: MIT
+ * Repository: https://github.com/fitoprincipe/geetools-code-editor
+ */
+
+var tools = require('users/fitoprincipe/geetools:tools')
+var l_algo = require('users/fitoprincipe/geetools:list_algorithms')
+var dt = require('users/fitoprincipe/geetools:decision_tree')
+var helpers = require('users/fitoprincipe/geetools:helpers_js')
+
+var help = {};
+
+var compute = function(image, mask_band, bits, options) {
+  // cast params in case they are not EE objects
+  var bits_dict = ee.Dictionary(bits)
+  var opt = ee.List(options)
+  image = ee.Image(image).select(mask_band)
+  
+  var first = ee.Image.constant(0) // init image
+  
+  // function for iterate over the options
+  var for_iterate = function(option, ini) {
+    var i = ee.Image(ini) // cast ini
+    
+    // bits relation dict contains the option?
+    var cond = bits_dict.contains(option);
+    
+    // get the mask for the option
+    var mask = tools.computeQAbits(ee.List(bits_dict.get(option)).get(0), 
+                                   ee.List(bits_dict.get(option)).get(1), 
+                                   option)(image)
+    return ee.Image(ee.Algorithms.If(cond, 
+                                     i.or(mask), 
+                                     i))
+  }
+  
+  var good_pix = ee.Image(opt.iterate(for_iterate, first))
+  
+  return good_pix.not();
+}
+
+var sentinel2 = function(options) {
+  var opt = options || ['opaque', 'cirrus']
+  var rel = {opaque: [10, 10] , cirrus:[11, 11]}
+  var band = 'QA60'
+  
+  var wrap = function(img){
+    var good_pix = compute(img, band, rel, opt)
+    return img.updateMask(good_pix)
+  }
+  return wrap
+}
+
+var landsatSR = function(options) {
+  var sr = {
+    bits: ee.Dictionary(
+      {
+        'cloud': [1,1], 
+        'shadow': [2,2], 
+        'adjacent': [3,3], 
+        'snow': [4,4]
+    
+     }),
+    band: 'sr_cloud_qa'}
+  
+  var pix = {
+    bits: ee.Dictionary(
+      {
+        'cloud': [5,5], 
+        'shadow': [3,3], 
+        'snow': [4,4]
+      }),
+    band: 'pixel_qa'}
+            
+  // Parameters
+  var opt = options || sr.bits.keys();
+  options = ee.List(opt);
+  
+  var wrap = function(image) {
+    var bands = image.bandNames();
+    var contains_sr = bands.contains('sr_cloud_qa');
+    var good_pix = ee.Image(ee.Algorithms.If(contains_sr, 
+                            compute(image, sr.band, sr.bits, opt),
+                            compute(image, pix.band, pix.bits, opt)))
+    
+    // var good_pix = compute(image, mask_band, bits, opt)
+    return image.updateMask(good_pix)
+  }
+  return wrap
+}
+
+var landsatTOA = function(options) {
+  var bits = ee.Dictionary({
+    'cloud': [4, 4], 
+    'shadow': [8, 8], 
+    'snow': [10, 10]
+  });
+  var mask_band = 'BQA'
+  
+  // Parameters
+  var opt = options || bits.keys();
+  options = ee.List(opt);
+  
+  var wrap = function(image) {
+    var good_pix = compute(image, mask_band, bits, options)
+    return image.updateMask(good_pix);
+  }
+  return wrap
+}
+
+var landsatTOAmask = function(name) {
+  var bits = ee.Dictionary({'cloud': [4,4], 'shadow': [8,8], 'snow': [10,10]});
+  var mask_band = 'BQA';
+  
+  // Parameters
+  name = name || 'cloud_mask';
+  var options = bits.keys();
+  
+  var wrap = function(image) {
+    var good_pix = compute(image, mask_band, bits, options)
+    return good_pix.rename(name);
+  }
+  return wrap
+}
+
+var modisSR = function(options) {
+  var bits = ee.Dictionary({
+    'cloud': [0, 0], 
+    'mix': [1,1], 
+    'shadow': [2,2], 
+    'cloud2':[10,10], 
+    'snow':[12,12]
+  });
+  
+  var opt = options || bits.keys()
+  var mask_band = 'state_1km'
+  
+  options = ee.List(opt);
+  var wrap = function(image) {
+    var good_pix = compute(image, mask_band, bits, opt)
+    return image.updateMask(good_pix);
+  }
+  return wrap
+}
+
+var sclData = ee.Dictionary({
+                'saturated': [1, 0],
+                'dark': [2, 0],
+                'shadow': [3, 0],
+                'vegetation': [4, 1],
+                'bare_soil': [5, 1],
+                'water': [6, 0],
+                'cloud_low': [7, 0],
+                'cloud_medium': [8, 0],
+                'cloud_high': [9, 0],
+                'cirrus': [10, 0],
+                'snow': [11, 0]
+            })
+
+var scl = function(image) {
+  // Decodify the SCL bands and create a mask for each category
+        
+  var i = image.select('SCL')
+
+  var data = ee.Dictionary(sclData)
+
+  var wrap = function(name, list) {
+      list = ee.List(list)
+      name = ee.String(name)
+      var band_value = ee.Number(list.get(0))
+      var mask = i.eq(band_value).rename(name)
+      return mask
+  }
+
+  var newbands = ee.Dictionary(data.map(wrap))
+  var images = newbands.values()
+  var first = ee.Image(images.get(0))
+  var rest = images.slice(1)
+  return ee.Image(tools.image.addMultiBands(first, rest))
+}
+
+var sclMask = function(options) {
+  var opt = options || ['saturated', 'dark', 'shadow', 'cloud_low', 
+  'cloud_medium', 'cloud_high', 'cirrus', 'snow']
+  opt = ee.List(opt)
+  var wrap = function(img) {
+    var r = opt.iterate(function(name, i){
+      i = ee.Image(i)
+      name = ee.String(name)
+      var data = ee.List(sclData.get(name))
+      var value = ee.Number(data.get(0))
+      var direction = ee.Number(data.get(1))
+      var band = i.select('SCL')
+      var mask = ee.Algorithms.If(direction,
+        band.eq(value),
+        band.neq(value)
+      )
+      mask = ee.Image(mask)
+      return i.updateMask(mask)
+    }, img)
+    return ee.Image(r)
+  }
+  return wrap
+}
+
+var hollstein_S2 = function(options) {
+  // Taken from André Hollstein et al. 2016 (doi:10.3390/rs8080666)
+  // http://www.mdpi.com/2072-4292/8/8/666/pdf
+  
+  var opt = options || ['cloud', 'snow', 'shadow', 'water', 'cirrus']
+  
+  var difference = function(a, b) {
+    var wrap = function(img) {
+      return img.select(a).subtract(img.select(b))
+    }
+    return wrap
+  }
+  var ratio = function(a, b) {
+    var wrap = function(img) {
+      return img.select(a).divide(img.select(b))
+    }
+    return wrap
+  }
+  
+  var opt_list = ee.List(opt)
+  
+  var compute_dt = function(img) {
+    
+    //1
+    var b3 = img.select('B3').lt(3190)
+    
+    //2
+    var b8a = img.select('B8A').lt(1660)
+    var r511 = ratio('B5', 'B11')(img).lt(4.33)
+    
+    //3
+    var s1110 = difference('B11', 'B10')(img).lt(2550)
+    var b3_3 = img.select('B3').lt(5250)
+    var r210 = ratio('B2','B10')(img).lt(14.689)
+    var s37 = difference('B3', 'B7')(img).lt(270)
+    
+    //4
+    var r15 = ratio('B1', 'B5')(img).lt(1.184)
+    var s67 = difference('B6', 'B7')(img).lt(-160)
+    var b1 = img.select('B1').lt(3000)
+    var r29 =  ratio('B2', 'B9')(img).lt(0.788)
+    var s911 = difference('B9', 'B11')(img).lt(210)
+    var s911_2 = difference('B9', 'B11')(img).lt(-970)
+    
+    var dtf = dt.binary({1:b3, 
+                         21:b8a, 22:r511, 
+                         31:s37, 32:r210, 33:s1110, 34:b3_3,
+                         41: s911_2, 42:s911, 43:r29, 44:s67, 45:b1, 46:r15
+                         },
+                         {'shadow-1':[[1,1], [21,1], [31,1], [41,0]],
+                          'water':   [[1,1], [21,1], [31,0], [42,1]],
+                          'shadow-2':[[1,1], [21,1], [31,0], [42,0]],
+                          'cirrus-2':[[1,1], [21,0], [32,1], [43,0]],
+                          'cloud-1': [[1,0], [22,1], [33,1], [44,1]],
+                          'cirrus-1':[[1,0], [22,1], [33,1], [44,0]],
+                          'cloud-2': [[1,0], [22,1], [33,0], [45,0]],
+                          'shadow-3':[[1,0], [22,0], [34,1], [46,0]],
+                          'snow':    [[1,0], [22,0], [34,0]],
+                         }, 'hollstein')
+    
+    var results = dtf(img)
+    
+    var optlist = ee.List(opt)
+    
+    var finalmask = ee.Image(optlist.iterate(function(option, ini){
+      ini = ee.Image(ini)
+      var mask = results.select([option])
+      return ini.or(mask)
+    }, ee.Image.constant(0).select([0], ['hollstein'])))
+    
+    return img.addBands(results).updateMask(finalmask.not())//results.select('hollstein'))
+  }
+  return compute_dt
+}
+
+var make = {
+  sentinel2: sentinel2,
+  landsatSR: landsatSR,
+  landsatTOA: landsatTOA,
+  modisSR: modisSR,
+  hollstein_S2: hollstein_S2
+}
+
+help['sentinel2'] = 'sentinel2(options)\n\n'+
+                    'function to mask out clouds of Sentinel 2 images\n'+
+                    'options (list): opaque, cirrus'
+                    
+help['landsatSR'] = 'landsatSR(options)\n\n'+
+                    'function to mask out clouds of Landsat SR images\n'+
+                    'collections: LANDSAT/LT04/C01/T1_SR, LANDSAT/LT05/C01/T1_SR,\n'+
+                    'LANDSAT/LE07/C01/T1_SR, LANDSAT/LC08/C01/T1_SR\n'+
+                    'options (list): cloud, shadow, adjacent (only L8), snow'
+
+help['landsatTOA'] = 'landsatTOA(options)\n\n'+
+                     'function to mask out clouds of Landsat TOA images\n'+
+                     'collections: LANDSAT/LT04/C01/T1_TOA, LANDSAT/LT05/C01/T1_TOA,\n'+
+                     'LANDSAT/LE07/C01/T1_TOA, LANDSAT/LC08/C01/T1_TOA\n'+
+                     'options (list): cloud, shadow, snow'
+
+help['modisSR'] = 'modis(options)\n\n'+
+                  'function to mask out clouds of MODIS images\n'+
+                  'collections: MODIS/006/MOD09GA, MODIS/006/MYD09GA\n'+
+                  'options (list): cloud, mix, shadow, cloud2, snow'
+
+help['hollstein_S2'] = 'hollstein_S2(options)\n\n'+
+                       'Implementation of the decision tree developed by André Hollstein et al. 2016 (doi:10.3390/rs8080666) (http://www.mdpi.com/2072-4292/8/8/666/pdf)\n'+
+                       'options: a list with one or more of "cloud", "water", "cirrus", "snow", "shadow"\n'
+
+help['make'] = 'Create functions using a key. Example:\n'+
+               "var make = require('users/fitoprincipe/geetools:cloud_masks').make\n"+
+               'var s2 = make.sentinel2()\n'+
+               'var LSR = make.landsatSR()'
+
+exports.help = help
+exports.sentinel2 = sentinel2
+exports.landsatSR = landsatSR
+exports.landsatTOA = landsatTOA
+exports.landsatTOAmask = landsatTOAmask
+exports.modisSR = modisSR
+exports.make = make
+exports.hollstein_S2 = hollstein_S2
+exports.options = ee.Dictionary(help).keys()
+exports.compute = compute
+exports.scl = scl
+exports.sclMask = sclMask
+
+var Test = function() {
+  print('running')
+  var sat = require('users/fitoprincipe/geetools:satellite')
+  var s2 = new sat.Sentinel(2, 'SR')
+  var site = tools.map.getBounds(Map)
+  var col = s2.collection.filterBounds(site).filterMetadata(s2.cloud_cover, 'less_than', 10)
+  var first = col.first()
+  Map.addLayer(first, s2.vis.NSR, 'S2 SR')
+}
+
+//Test()

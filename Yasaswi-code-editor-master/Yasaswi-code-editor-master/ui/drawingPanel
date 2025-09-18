@@ -1,0 +1,236 @@
+/***
+ * DrawingPanel Widget
+ * Author: Rodrigo E. Principe
+ * email: fitoprincipe82@gmail.com
+ * licence: MIT
+ * web: https://github.com/fitoprincipe/geetools-code-editor/wiki/DrawingPanel
+ ***/
+
+var tools = require('users/fitoprincipe/geetools:tools')
+var helper = require('users/fitoprincipe/geetools:helpers_js')
+var Polygon = require('users/fitoprincipe/geetools:ui/polygon').Polygon
+
+var options = {
+  'polygon': Polygon,
+}
+
+var DrawingPanel = function(options) {
+  
+  // Parsed arguments
+  var def = {
+    width: 300,
+    height: 100,
+    border: '1px solid black',
+    position: 'top-center',
+    layout: ui.Panel.Layout.flow('vertical'),
+    drawings: ['polygon'],
+    map: Map,
+    map_callback: null,
+    map_callback_id: null,
+    title: null,
+  }
+  this.opt = tools.get_options(def, options)
+  
+  // Width and Height PixelSize
+  var width = new helper.PixelSize(this.opt.width)
+  var height = new helper.PixelSize(this.opt.height)
+  
+  if (width.number < 150) {
+    print('Width of the widget must be greater than 150')
+    return null
+  }
+  
+  // Select drawing Dropdown
+  this.type_drop = ui.Select({
+    items: this.opt.drawings,
+    value: this.opt.drawings[0],
+  })
+  
+  // Start drawing Button
+  this.start_button = ui.Button({
+    label: 'start',
+    style: {
+      width: 20,
+    }
+  })
+  
+  // Stop drawing Button
+  this.stop_button = ui.Button({
+    label: 'stop',
+    style: {
+      width: 20,
+    }
+  })
+  
+  // Compute pixel size for name textbox
+  var size_name = width.subtract(100).subtract(20)
+  
+  // Name Textbox
+  this.drawing_name_textbox = ui.Textbox({
+    style: {
+      width: size_name.value(),
+    }
+  })
+  
+  // Panel for: name, start, stop
+  this.add_panel = ui.Panel({
+    widgets: [this.drawing_name_textbox, this.start_button, this.stop_button],
+    layout: ui.Panel.Layout.flow('horizontal')
+  })
+  
+  // List of widgets
+  var widgets = [
+      this.type_drop,
+      this.add_panel,
+    ]
+    
+  // Add Title if parsed
+  if (this.opt.title) {
+    var title_text = ui.Label(this.opt.title)
+    widgets = helper.array.insert(widgets, 0, title_text)
+  }
+  
+  // Main Panel
+  this.panel = ui.Panel({
+    widgets: widgets,
+    style: {
+      width: this.opt.width,
+      height: this.opt.height,
+      position: this.opt.position,
+      border: this.opt.border
+    },
+    layout: this.opt.layout
+  })
+  
+  // Scope variables
+  this.parent = null
+  this.draw = null
+  this.drawing_name = null // actual drawing name
+  this.drawings = {}  // Object to store drawings with their names
+  this.onStopCallback = null
+  this.onStartCallback = null
+  this.started = false
+  this.errors = []
+}
+
+DrawingPanel.prototype.start = function() {
+  var app = this
+  var wrap = function() {
+    // Check if already started
+    if (app.started) {
+      var error = 'There is a drawing already started, please stop it before a new drawing' 
+      app.errors.push(error)
+      print(error)
+      return null
+    }
+    // Check if there is a name
+    var name = app.drawing_name_textbox.getValue()
+    if (!name) {
+      var error = 'You must provide a name'
+      app.errors.push(error)
+      print(error)
+      return null
+    }
+    // set drawing name
+    app.drawing_name = name
+    // Bound user onStart callback
+    if (app.onStartCallback) {
+      app.onStartCallback(app)
+    }
+    // Get type of drawing
+    var toDraw = app.type_drop.getValue()
+    var Draw = options[toDraw]
+    // Before starting a new Drawing, if there is a previous one, get the callback ID
+    // of the latter
+    if (app.draw) {
+      app.opt.map_callback_id = app.draw.opt.map_callback_id
+    }
+    // make a new Drawing
+    app.draw = new Draw({
+      map: app.map,
+      //name: app.drawing_name.getValue(),
+      map_callback: app.opt.map_callback,
+      map_callback_id: app.opt.map_callback_id,
+    })
+    app.draw.start()
+    app.started = true
+    
+  }
+  return wrap
+}
+
+DrawingPanel.prototype.stop = function() {
+  var app = this
+  var wrap = function() {
+    if (app.started) { // If the drawing has started
+      // Stop drawing
+      app.draw.stop()
+      // Get drawing geometry
+      var drawing = app.draw.getDrawing()
+      // Get drawing name
+      var drawing_name = app.drawing_name_textbox.getValue()
+      // Store drawing
+      if (drawing) {
+        //app.drawings[drawing_name] = drawing  // I don't know why this is not working...
+        app.drawings = helper.object.insert(app.drawings, drawing_name, drawing)
+        // call user onStop callback
+      }
+      if (app.onStopCallback) {
+        try {
+          app.onStopCallback(app, drawing)
+        } catch (error) {
+          print("Something went wrong in 'onStop' callback:\n"+error.message)
+        }
+      }
+      app.started = false
+    }
+    else {
+      return null
+    }
+  }
+  return wrap
+}
+
+DrawingPanel.prototype.onStop = function(callback) {
+  this.onStopCallback = callback || null
+}
+
+DrawingPanel.prototype.onStart = function(callback) {
+  this.onStartCallback = callback || null
+}
+
+DrawingPanel.prototype.build = function() {
+  // bind callbacks
+  this.start_button.onClick(this.start()) 
+  this.stop_button.onClick(this.stop())
+  
+  return this.panel
+}
+
+DrawingPanel.prototype.addTo = function(widget) {
+  widget.add(this.build())
+  this.parent = widget
+  return widget
+}
+
+DrawingPanel.prototype.insertTo = function(widget, position) {
+  widget.insert(position, this.build())
+  this.parent = widget
+  return widget
+}
+
+exports.DrawingPanel = DrawingPanel
+
+var test = function() {
+  var panel = new DrawingPanel()
+  panel.addTo(Map)
+  
+  var printResult = function(dp, polygon) {
+    
+    print(polygon)
+    Map.addLayer(polygon)
+  }
+  panel.onStop(printResult)
+}
+
+//test()

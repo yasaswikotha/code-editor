@@ -1,0 +1,168 @@
+var helpersJS = require('users/fitoprincipe/geetools:helpers_js')
+var image_module = require('users/fitoprincipe/geetools:_tools/image').image
+
+/** MAP */
+var map = {};
+
+// ADD COLLECTION TO MAP
+map.addImageCollection = function(col, options) {
+  
+  var def = {
+    namePattern : '{id}',
+    datePattern : 'yyyy-MM-dd',
+    visParams : {min:0, max:1},
+    active : false
+  }
+  var opt = helpersJS.get_options(def, options)
+  
+  var list = col.toList(col.size())
+  var i = 0
+  
+  while (i >= 0) {
+    try {
+      var img = ee.Image(list.get(i))
+      var name = image_module.makeName(img, opt.namePattern, opt.datePattern)
+      Map.addLayer(img, opt.visParams, name.getInfo(), opt.active)
+      i++
+    } catch (error) {
+      return null
+    }
+  }
+}
+
+// Remove Layer
+// https://gis.stackexchange.com/questions/291199/google-earth-engine-remove-layer-from-the-layer-manager
+/*
+map.removeLayerByName = function(name, map) {
+  var m = map || Map
+  var layers = m.layers()
+  // list of layers names
+  var names = []
+  layers.forEach(function(lay) {
+    var lay_name = lay.getName()
+    names.push(lay_name)
+  })
+  // get index
+  var index = names.indexOf(name)
+  if (index > -1) {
+    // if name in names
+    var layer = layers.get(index)
+    m.remove(layer)
+  } else {
+    print('Layer '+name+' not found')
+  }
+}
+*/
+map.removeLayerByName = function(name, map) {
+  var m = map || Map
+  var layers = m.layers().getJsArray()
+  var removedIndexes = []
+  for (var i in layers) {
+    var lay = layers[i]
+    var lay_name = lay.getName()
+    if (lay_name === name) {
+      m.remove(lay)
+      removedIndexes.push(Number(i))
+    }
+  }
+  return removedIndexes
+}
+
+map.removeAllLayersByName = map.removeLayerByName
+
+map.removeLayer = function(layer, map) {
+  var m = map || Map
+  var layers = m.layers().getJsArray()
+  var removed = []
+  for (var i in layers) {
+    var lay = layers[i]
+    if (lay === layer) {
+      m.remove(lay)
+      removed.push(Number(i))
+    }
+  }
+  return removed
+}
+
+map.replaceLayer = function(layer, newlayer, map) {
+  if (layer !== newlayer) {
+    var m = map || Map
+    var layers = m.layers()
+    var layersjs = layers.getJsArray()
+    var replaced = []
+    for (var i in layersjs) {
+      var lay = layersjs[i]
+      if (lay === layer) {
+        var i = layersjs.indexOf(layer)
+        layers.set(i, newlayer)
+        replaced.push(Number(i))
+      }
+    }
+  }
+  return replaced
+}
+
+map.removeObject = function(eeobject, map) {
+  // remove every added object in the map
+  // return a list of the indexes removed
+  var m = map || Map
+  var layers = m.layers()
+  var layersJS = layers.getJsArray()
+  var removedIndexes = []
+  
+  for (var i in layersJS) {
+    var layer = layersJS[i]
+    var object = layer.getEeObject()
+    if (object === eeobject) {
+      m.remove(layer)
+      removedIndexes.push(Number(i))
+    }
+  }
+  return removedIndexes
+}
+
+map.getLayer = function(name, map) {
+  var m = map || Map
+  var layers = m.layers()
+  var lay = null
+  var l = layers.length()
+  for (var i=0; i<l; i++) {
+    var layer = layers.get(i)
+    var n = layer.getName()
+    if (n === name) {
+      lay = layer
+      break
+    }
+  }
+  return lay
+}
+
+map.getLayers = function(name, map) {
+  var m = map || Map
+  var layers = m.layers()
+  var l = layers.length()
+  var results = []
+  for (var i=0; i<l; i++) {
+    var lay = layers.get(i)
+    var n = lay.getName()
+    if (n === name) {
+      results.push(lay)
+    }
+  }
+  return results
+}
+
+map.moveLayer = function(layer, index, m) {
+  m = m || Map
+  map.removeLayer(layer, m)
+  var map_layers = m.layers()
+  map_layers.insert(index, layer)
+}
+
+map.getBounds = function(m) {
+  m = m || Map
+  var b = m.getBounds()
+  return ee.Geometry.Rectangle([[b[0], b[1]], [b[2], b[3]]])
+}
+
+exports.map = map

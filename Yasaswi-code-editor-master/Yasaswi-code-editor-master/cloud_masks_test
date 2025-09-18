@@ -1,0 +1,191 @@
+/***
+ * Tests for cloud mask functions
+ * 
+ * Author: Rodrigo E. Principe
+ * email: fitoprincipe82@gmail.com
+ * License: MIT
+ */
+ 
+ var s2mask = require('users/fitoprincipe/geetools:cloud_masks').sentinel2
+ var landsatSR = require('users/fitoprincipe/geetools:cloud_masks').landsatSR
+ var cloud = require('users/fitoprincipe/geetools:cloud_masks')
+ 
+ var get_img = function(colid, cloud_prop, cloud_percent) {
+   var percent = cloud_percent || 40;
+   var cent = Map.getCenter();
+   var col = ee.ImageCollection(colid)
+             .filterBounds(cent)
+             .filterMetadata(cloud_prop, 'greater_than', percent)
+             //.filterDate('2017-01-01', '2017-03-01')
+             .sort(cloud_prop);
+   
+   if (col.size().getInfo() !== 0) {
+     return ee.Image(col.first());
+   }
+   else {
+     print('Collection is empty')
+   }
+ }
+ 
+ var show = function(colid, cloud_prop, viz, name, func, params, cloud_percent) {
+     var img = get_img(colid, cloud_prop, cloud_percent)
+     //var vis = {bands:['B8', 'B12', 'B4'], min:0, max:5000}
+     var masked = func(params)(img)
+     Map.addLayer(masked, viz, name+' masked');
+     Map.addLayer(img, viz, name+' NOT masked', false);
+     Map.centerObject(img)
+     return masked
+ }
+ 
+ var sentinel2 = function(options) {
+   var opt = options || null
+   show('COPERNICUS/S2', 
+        'CLOUDY_PIXEL_PERCENTAGE', 
+        {bands:['B8', 'B12', 'B4'], min:0, max:5000}, 
+        'SENTINEL 2', 
+        cloud.make.sentinel2, 
+        opt)
+ }
+ 
+ var landsat8SR = function(options) {
+   var opt = options || null
+   show('LANDSAT/LC08/C01/T1_SR', 
+        'CLOUD_COVER', 
+        {bands:['B5', 'B7', 'B4'], min:0, max:5000}, 
+        'Landsat 8 SR', 
+        cloud.make.landsatSR, 
+        opt)
+ }
+ 
+ var landsat5SR = function(options) {
+   var opt = options || null
+   show('LANDSAT/LT05/C01/T1_SR', 
+        'CLOUD_COVER', 
+        {bands:['B4', 'B5', 'B3'], min:0, max:5000}, 
+        'Landsat 5 SR', 
+        cloud.make.landsatSR, 
+        opt)
+ }
+ 
+ var landsat7SR = function(options) {
+   var opt = options || null
+   show('LANDSAT/LE07/C01/T1_SR', 
+        'CLOUD_COVER', 
+        {bands:['B4', 'B5', 'B3'], min:0, max:5000}, 
+        'Landsat 7 SR', 
+        cloud.make.landsatSR, 
+        opt)
+ }
+ 
+ var landsat4SR = function(options) {
+   var opt = options || null
+   show('LANDSAT/LT04/C01/T1_SR', 
+        'CLOUD_COVER', 
+        {bands:['B4', 'B5', 'B3'], min:0, max:5000}, 
+        'Landsat 4 SR', 
+        cloud.make.landsatSR, 
+        opt)
+ }
+ 
+ var landsat4TOA = function(options) {
+   var opt = options || null
+   show('LANDSAT/LT04/C01/T1_TOA', 
+        'CLOUD_COVER',
+        {bands:['B4', 'B5', 'B3'], min:0, max:0.5},
+        'Landsat 4 TOA',
+        cloud.make.landsatTOA,
+        opt)
+ }
+ 
+ var landsat5TOA = function(options) {
+   var opt = options || null
+   show('LANDSAT/LT05/C01/T1_TOA', 
+        'CLOUD_COVER',
+        {bands:['B4', 'B5', 'B3'], min:0, max:0.5},
+        'Landsat 5 TOA',
+        cloud.make.landsatTOA,
+        opt)
+ }
+ 
+ var landsat7TOA = function(options) {
+   var opt = options || null
+   show('LANDSAT/LE07/C01/T1_TOA', 
+        'CLOUD_COVER',
+        {bands:['B4', 'B5', 'B3'], min:0, max:0.5},
+        'Landsat 7 TOA',
+        cloud.make.landsatTOA,
+        opt)
+ }
+ 
+ var landsat8TOA = function(options) {
+   var opt = options || null
+   var masked = show('LANDSAT/LC08/C01/T1_TOA', 
+                    'CLOUD_COVER',
+                    {bands:['B5', 'B7', 'B4'], min:0, max:0.5},
+                    'Landsat 8 TOA',
+                    cloud.make.landsatTOA,
+                    opt)
+    return masked
+ }
+ 
+ var modisSR = function(date, options, name) {
+   var opt = options || null
+   var col = ee.ImageCollection('MODIS/006/MOD09GA')
+   var vis = {bands:['sur_refl_b02', 'sur_refl_b06', 'sur_refl_b01'], min:0, max:5000}
+   var d = date || '2017-03-01'
+   var eedate = ee.Date(d)
+   var n = name || 'MODIS TERRA 500m'
+   
+   var filtered = col.filterDate(eedate, eedate.advance(1, 'day'))
+   if (filtered.size().getInfo() !== 0) {
+     var i = ee.Image(filtered.first())
+     var masked = cloud.make.modis(opt)(i)
+     Map.addLayer(masked, vis, n+' masked');
+     Map.addLayer(i, vis, n+' NOT masked', false);
+   }
+   else {
+     print('Collection is empty')
+   }
+ }
+ 
+var sentinel2hollstein = function(options) {
+  var opt = options || ['cloud', 'snow', 'shadow', 'water', 'cirrus']
+  var cent = Map.getCenter();
+  var vis = {bands:['B8', 'B12', 'B4'], min:0, max:5000}
+  var col = ee.ImageCollection('COPERNICUS/S2')
+             .filterBounds(cent)
+             .filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'greater_than', 50)
+             .sort('CLOUDY_PIXEL_PERCENTAGE');
+  
+  //var i = ee.Image(col.first())
+  var i = get_img('COPERNICUS/S2', 'CLOUDY_PIXEL_PERCENTAGE')
+  var mask = cloud.hollstein_S2(options)(i)
+  Map.addLayer(mask, vis, 'HOLLSTEIN Masked');
+  Map.addLayer(i, vis, 'HOLLSTEIN NOT masked', false);
+}
+ 
+exports.sentinel2 = sentinel2
+exports.landsat8SR = landsat8SR
+exports.landsat5SR = landsat5SR
+exports.landsat4SR = landsat4SR
+exports.landsat7SR = landsat7SR
+exports.landsat4TOA = landsat4TOA
+exports.landsat5TOA = landsat5TOA
+exports.landsat7TOA = landsat7TOA
+exports.landsat8TOA = landsat8TOA
+exports.modisSR = modisSR
+exports.sentinel2hollstein = sentinel2hollstein
+
+exports.options = function() {
+  var opt = ['sentinel2',
+             'landsat8SR',
+             'landsat5SR',
+             'landsat4SR',
+             'landsat7SR',
+             'landsat4TOA',
+             'landsat5TOA',
+             'landsat7TOA',
+             'landsat8TOA',
+             'modisSR']
+  print(opt)
+}

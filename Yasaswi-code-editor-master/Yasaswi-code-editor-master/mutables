@@ -1,0 +1,57 @@
+/****************
+ * Mutable Objects
+ * (despite https://groups.google.com/d/msg/google-earth-engine-developers/ZWxQsCiJhQY/x4b-7vKYAwAJ)
+ * 
+ * Author: Rodrigo E. Principe
+ * email: fitoprincipe82@gmail.com
+ * licence: MIT
+ ****************/
+var tools = require('users/fitoprincipe/geetools:tools')
+
+var Feature = function(feature) {
+  this.feature = feature
+  this.set = function(key, value) {
+    this.feature = this.feature.set(key, value)
+  }
+  this.get = function(property) {
+    return this.feature.get(property)
+  }
+  this.id = this.feature.id()
+}
+exports.Feature = Feature
+
+var FeatureCollection = function(collection) {
+  this.collection = collection
+  
+  this.setPosition = function(position, property, value) {
+    var featlist = this.collection.toList(this.collection.size())
+    var feat = ee.Feature(featlist.get(position))
+    this.set(feat, property, value)
+  }
+  
+  this.getPosition = function(position, property) {
+    var featlist = this.collection.toList(this.collection.size())
+    var feat = ee.Feature(featlist.get(position))
+    return this.get(feat, property)
+  }
+  
+  this.set = function(feature, property, value) {
+    var fid = feature.id() // string
+    var newft = this.collection.map(function(feat) {
+      feat = ee.Feature(feat)
+      var featid = feat.id()
+      var cond = fid.compareTo(featid).eq(0)
+      return ee.Feature(ee.Algorithms.If(cond, 
+      feat.set(property, value), feat))
+    })
+    this.collection = newft
+  }
+  
+  this.get = function(feature, property) {
+    var fid = feature.id() // string
+    var feat = ee.Feature(this.collection.filterMetadata('system:index', 'equals', fid).first())
+    return feat.get(property)
+  }
+  
+}
+exports.FeatureCollection = FeatureCollection

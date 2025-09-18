@@ -1,0 +1,114 @@
+/**
+ * CheckSelect Widget
+ * Author: Rodrigo E. Principe
+ * email: fitoprincipe82@gmail.com
+ * license: MIT
+ **/
+ 
+var helpers = require('users/fitoprincipe/geetools:helpers_js')
+
+var CheckSelect = function(options) {
+  var def = {
+    items: [],
+    checkbox: {
+      style: {
+        padding: '8px 0px 8px 0px'
+      }
+    },
+    select: {
+      style: {
+      }
+    },
+    panel: {
+      style: {
+        padding: '0px 0px 0px 0px'
+      },
+      layout: ui.Panel.Layout.flow('horizontal')
+    }
+  }
+  this.options = helpers.get_options(def, options)
+  
+  this.options.select.items = this.options.items
+  
+  this.checkbox = ui.Checkbox(this.options.checkbox)
+  this.select = ui.Select(this.options.select)
+  
+  this.options.panel.widgets = [this.checkbox, this.select]
+  
+  this.panel = ui.Panel(this.options.panel)
+  
+  this.name = 'CheckSelect'
+  
+  // Inherit
+  this.items = this.select.items()
+  
+  // Bindings
+  this.select.onChange(this.selectCallback())
+  this.checkbox.onChange(this.checkCallback())
+}
+
+// Getters
+CheckSelect.prototype.getLabel = function() {
+  var value = this.select.getValue()
+  // check if items is a list of objects or not
+  var firstItem = this.items.get(0)
+  var selection = null
+  
+  if (typeof(firstItem) !== 'object') {
+    selection = value
+  } else {
+    // iterate over each element to find the associated value
+    this.items.forEach(function(element, index) {
+      var label = element.label
+      var val = element.value
+      if (value === val) {selection = label}
+    })
+  }
+  return selection
+}
+
+// onSelect
+CheckSelect.prototype.selectCallback = function() {
+  var self = this
+  var wrap = function(value, widget) {
+    if (self.onSelectCallback) {
+      self.onSelectCallback(value, self.checkbox.getValue(), widget, self.checkbox, self)
+    }
+  }
+  return wrap
+}
+CheckSelect.prototype.onSelect = function(callback) {
+  this.onSelectCallback = callback
+}
+
+// onCheck
+CheckSelect.prototype.checkCallback = function() {
+  var self = this
+  var wrap = function(value, widget) {
+    if (self.onCheckCallback) {
+      self.onCheckCallback(value, self.select.getValue(), widget, self.select, self)
+    }
+  }
+  return wrap
+}
+CheckSelect.prototype.onCheck = function(callback) {
+  this.onCheckCallback = callback
+}
+
+CheckSelect.prototype.build = function() {
+  return this.panel
+}
+
+CheckSelect.prototype.addTo = function(widget) {
+  widget.add(this.build())
+  this.parent = widget
+  return widget
+}
+
+CheckSelect.prototype.insertTo = function(widget, position) {
+  widget.insert(position, this.build())
+  this.parent = widget
+  return widget
+}
+
+exports.CheckSelect = CheckSelect

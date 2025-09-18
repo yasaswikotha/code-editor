@@ -1,0 +1,63 @@
+/**
+ * Util functions for handling assets
+ * Author: Rodrigo E. Principe
+ * email: fitoprincipe82@gmail.com
+ * license: MIT
+ **/
+ 
+var helpers = require('users/fitoprincipe/geetools:helpers_js')
+
+var getRoot = function(id) {
+  if (id) {
+    var splitted = id.split('/')
+    return splitted[0]+'/'+splitted[1]
+  } else {
+    return ee.data.getAssetRoots()[0]['id']
+  }
+}
+exports.getRoot = getRoot
+
+var recrusiveDeleteAsset = function(assetId) {
+    var info = ee.data.getInfo(assetId)
+    if (info) {
+        var ty = info['type']
+        if (ty === 'Image' || ty === 'FeatureCollection') {
+            // setting content to 0 will delete the assetId
+            var content = 0
+        } else if (ty === 'Folder' || ty === 'ImageCollection') {
+            try {
+                var content = ee.data.getList({'id':assetId})
+            } catch(e) {
+                print(e)
+                return null
+            }
+        } else {
+            print("Can't handle "+ty+" type yet")
+            return null
+        }
+
+        if (content === 0) {
+            // delete empty colletion and/or folder
+            ee.data.deleteAsset(assetId)
+        } else {
+            for (var i in content) {
+              var asset = content[i]
+              var path = asset['id']
+              var ty = asset['type']
+              if (ty === 'Image') {
+                  // print('deleting {}'.format(path))
+                  ee.data.deleteAsset(path)
+              } else {
+                  recrusiveDeleteAsset(path)
+              }
+            }
+            // delete empty collection and/or folder
+            ee.data.deleteAsset(assetId)
+        }
+    } else {
+        print(assetId+' does not exists or there is another problem')
+    }
+}
+exports.recrusiveDeleteAsset = recrusiveDeleteAsset
+
+//recrusiveDeleteAsset('users/fitoprincipe/TEST/Folder/Collection')

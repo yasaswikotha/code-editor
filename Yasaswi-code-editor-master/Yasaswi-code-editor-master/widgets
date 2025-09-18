@@ -1,0 +1,24 @@
+/***
+ * Custom Widgets
+ * Author: Rodrigo E. Principe
+ * email: fitoprincipe82@gmail.com
+ * Licence: MIT
+ ***/
+
+var ClosePanel = require('users/fitoprincipe/geetools:ui/closePanel').ClosePanel
+exports.ClosePanel = ClosePanel
+
+var DrawingPanel = require('users/fitoprincipe/geetools:ui/drawingPanel').DrawingPanel
+exports.DrawingPanel = DrawingPanel
+
+var CheckSelect = require('users/fitoprincipe/geetools:ui/checkSelect').CheckSelect
+exports.CheckSelect = CheckSelect
+
+var asyncSelect = require('users/fitoprincipe/geetools:ui/async').asyncSelect
+exports.asyncSelect = asyncSelect
+
+var labelWidget = require('users/fitoprincipe/geetools:ui/labels').labelWidget
+exports.labelWidget = labelWidget
+
+var ImageSlider = require('users/fitoprincipe/geetools:ui/ImageSlider').ImageSlider
+exports.ImageSlider = ImageSlider
